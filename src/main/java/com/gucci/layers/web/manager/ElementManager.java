@@ -31,6 +31,12 @@ public class ElementManager {
         return this;
     }
 
+    public ElementManager scroll(SelenideElement element) {
+        element
+                .scrollTo();
+        return this;
+    }
+
     public ElementManager input(SelenideElement element, String text) {
         element
                 .shouldBe(visible, Duration.ofSeconds(DELAY))

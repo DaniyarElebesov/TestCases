@@ -24,8 +24,15 @@ public class ProductsPage extends BasePage<ProductsPage> {
     public ElementsCollection searchProductList = featuresItemsForm.$$("col-sm-4");
     public SelenideElement searchedProductName = $x("//div[@class='overlay-content']/p");
     public SelenideElement allProductsIsVisible = $x("//h2[@class='title text-center']");
+    public SelenideElement firstProductAddToCart = $x("//div[@class='productinfo text-center']/a[@data-product-id='1']");
+    public SelenideElement continueShoppingBtn = $x("//button[@class='btn btn-success close-modal btn-block']");
+    public SelenideElement secondProductAddToCart = $x("//div[@class='productinfo text-center']/a[@data-product-id='2']");
+    public SelenideElement viewCartBtn = $x("//u[text()='View Cart']");
     public ElementsCollection allProducts = $$x("//ul[@class='nav nav-pills nav-justified']/../preceding-sibling::div/div/p");
-
+    public ElementsCollection allProductsInTheCart = $$x("//tbody//h4/a");
+    public ElementsCollection allProductsInTheCartPrice = $$x("//td[@class='cart_price']");
+    public ElementsCollection allProductsInTheCartQuantity = $$x("//td[@class='cart_quantity']");
+    public ElementsCollection totalPrice = $$x("//p[@class='cart_total_price']");
 
 
     @Override
@@ -59,7 +66,42 @@ public class ProductsPage extends BasePage<ProductsPage> {
         return this;
     }
 
+    @Step("Hover over first product and click 'Add to cart'")
+    public ProductsPage clickFirstProductAddToCart() {
+        elementManager.clickWithScroll(firstProductAddToCart);
+        return this;
+    }
 
+    @Step("Click 'Continue Shopping' button")
+    public ProductsPage clickContinueShoppingButton() {
+        elementManager.clickWithScroll(continueShoppingBtn);
+        return this;
+    }
 
+    @Step("Hover over second product and click 'Add to cart'")
+    public ProductsPage clickSecondProductAddToCart() {
+        elementManager.clickWithScroll(secondProductAddToCart);
+        return this;
+    }
+
+    @Step("Click 'View Cart' button")
+    public ProductsPage clickViewCartButton() {
+        elementManager.clickWithScroll(viewCartBtn);
+        return this;
+    }
+
+    @Step("List of products in the cart")
+    public ProductsPage listOfProductsInTheCart() {
+        allProductsInTheCart.forEach(productsInTheCart -> System.out.println(productsInTheCart.getText()));
+        return this;
+    }
+
+    @Step("Verify their prices, quantity and total price")
+    public ProductsPage verifyPriceQtyTotalPrice() {
+        allProductsInTheCartPrice.forEach(price -> System.out.println("Price: " + price.getText()));
+        allProductsInTheCartQuantity.forEach(quantity -> System.out.println("Quantity: " + quantity.getText()));
+        totalPrice.forEach(totalPrize -> System.out.println("Total price: " + totalPrize.getText()));
+        return this;
+    }
 
 }

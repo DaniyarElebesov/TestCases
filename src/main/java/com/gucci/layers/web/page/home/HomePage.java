@@ -35,6 +35,8 @@ public class HomePage extends BasePage<HomePage> {
     public SelenideElement inputSubscriptionEmail = $(By.id("susbscribe_email"));
     public SelenideElement subscriptionBtn = $(By.id("subscribe"));
     public SelenideElement subscriptionSuccessTextIsVisible = $x("//div[@class='alert-success alert']");
+    public SelenideElement cartBtn =$x("//a[@href='/view_cart']");
+    public SelenideElement viewProductBtn14 =$x("//a[@href='/product_details/14']");
 
     @Override
     public HomePage waitForPageLoaded() {
@@ -125,6 +127,12 @@ public class HomePage extends BasePage<HomePage> {
     public HomePage visibilityOfSuccessfulSubscription() {
         subscriptionSuccessTextIsVisible.shouldHave(Condition.exactText("You have been successfully subscribed!"));
         System.out.println(subscriptionSuccessTextIsVisible.getText());
+        return this;
+    }
+
+    @Step("Click 'View Product' for any product on home page (14)")
+    public HomePage clickViewProduct14Button() {
+        elementManager.clickWithScroll(viewProductBtn14);
         return this;
     }
 
