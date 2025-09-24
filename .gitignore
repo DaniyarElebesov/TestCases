@@ -1,43 +1,65 @@
-.gradle
+# Игнорируем всё в папках .idea и *.iml
+.gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### IntelliJ IDEA ###
-.idea/
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
-*.iws
-*.iml
-*.ipr
 out/
-!**/src/main/**/out/
-!**/src/test/**/out/
+*.iml
+.idea/
+*.ipr
+*.iws
 
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
+# Игнорируем логи
+logs/
+*.log
 
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
+# Игнорируем кэш Gradle
+.gradle/
+**/build/
 
-### VS Code ###
-.vscode/
+# Игнорируем папки сборки
+**/target/
+**/bin/
+**/out/
 
-### Mac OS ###
+# Игнорируем зависимости (если используются)
+**/lib/
+**/libs/
+
+# Игнорируем настройки IDE
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/dictionaries
+.idea/vcs.xml
+.idea/jsLibraryMappings.xml
+.idea/dataSources.ids
+.idea/dataSources.xml
+.idea/sqlDataSources.xml
+.idea/dynamic.xml
+.idea/uiDesigner.xml
+.idea/compiler.xml
+.idea/codeStyles/
+.idea/codeStyles.xml
+.idea/codeStyleSettings.xml
+.idea/misc.xml
+.idea/modules.xml
+.idea/runConfigurations/
+
+# Игнорируем системные файлы
 .DS_Store
+Thumbs.db
+
+# Игнорируем временные файлы
+*.tmp
+*.temp
+
+# Игнорируем файлы окружения
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Игнорируем отчеты тестов
+**/test-results/
+**/reports/
+**/allure-results/
+**/allure-report/
