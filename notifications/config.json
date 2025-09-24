@@ -8,9 +8,9 @@
     "allureFolder": "build/reports/allure-report/allureReport/",
     "enableChart": true
   },
-  "telegram": {
-    "token": "8031462767:AAG36jU_hDir3thS65PdJu33F_oEmb1kquw",
-    "chat": "-1002968685112",
+  "slack": {
+    "token": "xoxb-8649160762915-9563387706501-Km2bN4wbWqsB1NhF065mHj6Q",
+    "chat": "C09D3RA3551",
     "replyTo": ""
   }
 }
