@@ -5,12 +5,11 @@ pipeline {
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '30'))
     disableConcurrentBuilds()
+    skipDefaultCheckout(true)  // чтобы не было двойного "Declarative: Checkout SCM"
   }
 
-  triggers {
-    // 02:00 Пн–Пт
-    cron('0 2 * * 1-5')
-  }
+  // 02:00 Пн–Пт
+  triggers { cron('0 2 * * 1-5') }
 
   environment {
     GRADLE_OPTS = '-Dorg.gradle.daemon=false -Dorg.gradle.console=plain'
@@ -18,7 +17,6 @@ pipeline {
   }
 
   stages {
-
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
@@ -41,7 +39,12 @@ pipeline {
 
     stage('Run Smoke Tests') {
       steps {
-        sh './gradlew clean smokeTest --continue'
+        // НЕ роняем пайплайн при фейлах: помечаем UNSTABLE и идём дальше
+        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+          sh './gradlew clean smokeTest --continue'
+          // При необходимости добавить Selenide-хедлесс:
+          // sh './gradlew clean smokeTest --continue -Dselenide.browser=chrome -Dselenide.headless=true -Dselenide.timeout=10000'
+        }
       }
       post {
         always {
@@ -51,52 +54,23 @@ pipeline {
       }
     }
 
-    stage('Generate Allure Report') {
+    // Не критично: gradle-генерация HTML Allure; если нет таска — не падаем
+    stage('Generate Allure Report (gradle)') {
       steps {
-        sh '''
-          set +e
-          ./gradlew allureReport
-          EXIT=$?
-          if [ $EXIT -ne 0 ]; then
-            echo "No allureReport task or failed — continue with allure-results only"
-          fi
-          set -e
-          ls -la build/allure-results || true
-          ls -la allure-report || true
-        '''
-      }
-    }
-
-    stage('Download Allure Notifications Jar') {
-      steps {
-        sh '''
-          cd ..
-          FILE=allure-notifications-4.8.0.jar
-          if [ ! -f "$FILE" ]; then
-            if command -v wget >/dev/null 2>&1; then
-              wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
-            else
-              curl -L -o allure-notifications-4.8.0.jar https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
-            fi
-          fi
-          ls -la "$FILE"
-        '''
-      }
-    }
-
-    stage('Send Slack Notification') {
-      steps {
-        sh '''
-          # запускаем jar из родительской директории, конфиг читаем из репо
-          java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
-        '''
+        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+          sh '''
+            set +e
+            ./gradlew allureReport
+            exit 0
+          '''
+        }
       }
     }
   }
 
   post {
     always {
-      // Публикация Allure в Jenkins (если плагин установлен)
+      // 1) Публикация Allure в Jenkins (читает build/allure-results)
       script {
         try {
           allure(results: [[path: 'build/allure-results']], reportBuildPolicy: 'ALWAYS')
@@ -104,10 +78,42 @@ pipeline {
           echo 'Allure Jenkins Plugin не найден — пропускаю публикацию.'
         }
       }
+
+      // 2) Скачивание JAR (если нет) и запуск Slack-уведомления ВСЕГДА
+      script {
+        // Скачать jar в родительскую папку (как в твоих шагах)
+        sh '''
+          cd "$WORKSPACE/.."
+          FILE=allure-notifications-4.8.0.jar
+          if [ ! -f "$FILE" ]; then
+            if command -v wget >/dev/null 2>&1; then
+              wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
+            else
+              curl -L -o "$FILE" https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
+            fi
+          fi
+        '''
+
+        // Безопасная подмена токена, если есть Credential (иначе берётся из файла)
+        withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_BOT_TOKEN')]) {
+          sh '''
+            cd "$WORKSPACE"
+            if [ -n "$SLACK_BOT_TOKEN" ] && [ -f notifications/config.json ]; then
+              sed -i.bak -E 's/"token"\\s*:\\s*".*"/"token": "'$SLACK_BOT_TOKEN'"/' notifications/config.json
+            fi
+
+            # Запуск уведомления
+            java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
+          '''
+        }
+      }
+
+      // 3) Уборка в самом конце
       cleanWs(deleteDirs: true, notFailBuild: true)
     }
-    success { echo '✅ Готово: smoke + Allure + Slack.' }
-    unstable { echo '⚠️ UNSTABLE: есть фейлы, смотри отчёты.' }
-    failure { echo '❌ FAILURE: смотри логи.' }
+
+    success  { echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS" }
+    unstable { echo "⚠️ ${env.JOB_NAME} #${env.BUILD_NUMBER} UNSTABLE — есть фейлы тестов" }
+    failure  { echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILURE" }
   }
 }
