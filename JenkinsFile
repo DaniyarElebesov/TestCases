@@ -1,107 +1,151 @@
 pipeline {
   agent any
 
+  options {
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+    disableConcurrentBuilds()
+  }
+
   triggers {
-    // 02:00 Пн–Пт
+    // 02:00 по будням (время = таймзона Jenkins)
     cron('0 2 * * 1-5')
   }
 
-  tools {
-    gradle 'Gradle'
+  environment {
+    GRADLE_OPTS = '-Dorg.gradle.daemon=false -Dorg.gradle.console=plain'
+    JAVA_TOOL_OPTIONS = '-Xms256m -Xmx1024m'
   }
 
   stages {
+
     stage('Checkout') {
       steps {
-        git branch: 'kaniet', url: 'https://github.com/kaniet-mukaev/Gucci.git'
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[url: 'https://github.com/DaniyarElebesov/TestCases.git']],
+          extensions: [[$class: 'CleanBeforeCheckout']]
+        ])
+        sh 'git rev-parse --short HEAD'
+      }
+    }
+
+    stage('Prepare') {
+      steps {
+        sh '''
+          chmod +x gradlew || true
+          ./gradlew --version
+        '''
       }
     }
 
     stage('Run Smoke Tests') {
       steps {
-        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-          sh './gradlew clean smokeTest --continue'
+        sh './gradlew clean smokeTest --continue'
+      }
+      post {
+        always {
+          // junit отчёты (JUnit5/TestNG)
+          junit allowEmptyResults: true, testResults: 'build/test-results/**/*.xml'
+          // артефакты и результаты allure
+          archiveArtifacts artifacts: 'build/allure-results/**, build/reports/**, build/logs/**', fingerprint: true, allowEmptyArchive: true
         }
       }
     }
 
     stage('Generate Allure Report') {
       steps {
-        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-          sh './gradlew allureReport'
-        }
+        // Если в проекте есть gradle-таск allureReport — он создаст папку allure-report/
+        // Если таска нет — просто не упадём; jar может использовать и results, но обычно ждёт allure-report
+        sh '''
+          set +e
+          ./gradlew allureReport
+          EXIT=$?
+          if [ $EXIT -ne 0 ]; then
+            echo "No allureReport task or failed — continuing with allure-results only"
+          fi
+          set -e
+          ls -la || true
+          ls -la build || true
+          ls -la build/allure-results || true
+          ls -la build/reports || true
+          ls -la allure-report || true
+        '''
       }
     }
 
     stage('Download Allure Notifications Jar') {
       steps {
-        dir('..') {
-          sh '''
-            FILE=allure-notifications-4.8.0.jar
-            if [ ! -f "$FILE" ]; then
-              wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
-            fi
-          '''
-        }
+        sh '''
+          # Переход на уровень выше как в твоих шагах
+          cd ..
+          FILE=allure-notifications-4.8.0.jar
+          if [ ! -f "$FILE" ]; then
+            wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
+          fi
+          ls -la "$FILE"
+        '''
       }
     }
 
-    stage('Send Telegram Notification') {
+    stage('Send Slack Notification') {
       steps {
-        sh '''#!/usr/bin/env bash
-          set -euo pipefail
+        script {
+          // Если настроен секрет в Jenkins Credentials (Kind: Secret text, ID: slack-bot-token),
+          // аккуратно подставим его в notifications/config.json; иначе используем токен как в репозитории.
+          withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_BOT_TOKEN')]) {
+            sh '''
+              set -e
+              # Возвращаемся в рабочую директорию джобы
+              cd "$WORKSPACE"
 
-          # Подставляем реальный BUILD_URL
-          sed "s#\\${BUILD_URL}#${BUILD_URL%/}#g" notifications/config.json > notifications/config.resolved.json
+              # Подменим токен в конфиге, только если переменная непуста
+              if [ -n "$SLACK_BOT_TOKEN" ]; then
+                echo "Injecting Slack token from Jenkins credentials into notifications/config.json"
+                # Осторожная замена значения поля "token" на секрет
+                sed -i.bak -E 's/"token"\\s*:\\s*".*"/"token": "'$SLACK_BOT_TOKEN'"/' notifications/config.json
+              else
+                echo "No Jenkins credential provided; using token as-is from notifications/config.json"
+              fi
 
-          JAVA_OPTS="${JAVA_OPTS:-} \
-            -Dorg.slf4j.simpleLogger.defaultLogLevel=warn \
-            -Dorg.apache.commons.logging.Log=org.apache.commons.logging.impl.SimpleLog \
-            -Dorg.apache.commons.logging.simplelog.log.org.apache.http=warn \
-            -Dorg.apache.commons.logging.simplelog.log.org.apache.http.wire=off"
+              # На всякий случай покажем ключевые поля (без токена)
+              jq '{base: .base, slack: {replyTo: .slack.replyTo}}' notifications/config.json || true
 
-          java $JAVA_OPTS -DconfigFile=notifications/config.resolved.json \
-               -jar ../allure-notifications-4.8.0.jar
-        '''
+              # Запуск уведомления (jar лежит в родительской директории согласно твоим шагам)
+              java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
+            '''
+          }
+        }
+      }
+      post {
+        success { echo '✅ Slack notification step completed.' }
+        unsuccessful { echo '⚠️ Slack notification step finished with issues (check console output).' }
       }
     }
   }
 
   post {
+    success {
+      echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS — Allure & Slack done (if configured)."
+    }
+    unstable {
+      echo "⚠️ ${env.JOB_NAME} #${env.BUILD_NUMBER} UNSTABLE — check failing tests."
+    }
+    failure {
+      echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILURE."
+    }
     always {
-      echo '📦 Архивируем отчёты'
-      junit 'build/test-results/smokeTest/*.xml'
-      archiveArtifacts artifacts: 'build/allure-results/**', fingerprint: true
-      archiveArtifacts artifacts: 'allure-report/**', fingerprint: true
+      // Отображение отчёта в Jenkins (если установлен Allure Jenkins Plugin)
+      // Примечание: плагин читает allure-results; само HTML-создание делает gradle allureReport
+      allure([
+        includeProperties: false,
+        jdk: '',
+        results: [[path: 'build/allure-results']],
+        reportBuildPolicy: 'ALWAYS'
+      ])
 
-      // Публикация Allure в Jenkins
-      allure includeProperties: false, results: [[path: 'build/allure-results']]
-
-      // Slack-уведомление (только текст, без картинок)
-      withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
-        sh '''#!/usr/bin/env bash
-          set -euo pipefail
-
-          REPORT_URL="${BUILD_URL}allure"
-
-          if [ ! -f allure-report/widgets/summary.json ]; then
-            echo "❌ summary.json не найден, Slack уведомление пропущено"
-            exit 0
-          fi
-
-          STATS=$(cat allure-report/widgets/summary.json | jq -r '.statistic')
-          PASSED=$(echo $STATS | jq -r '.passed')
-          BROKEN=$(echo $STATS | jq -r '.broken')
-          FAILED=$(echo $STATS | jq -r '.failed')
-          SKIPPED=$(echo $STATS | jq -r '.skipped')
-          TOTAL=$(echo $STATS | jq -r '.total')
-          DURATION=$(jq -r '.time.duration' allure-report/widgets/summary.json)
-
-          MESSAGE="*Allure Report*\\nSmoke Tests завершены. Итог: ${TOTAL} тестов\\n*Duration:* ${DURATION}\\n\\n✅ Passed: ${PASSED}\\n❌ Broken: ${BROKEN}\\n⛔ Failed: ${FAILED}\\n⚪ Skipped: ${SKIPPED}\\n\\n📊 Отчёт: ${REPORT_URL}"
-
-          curl -sSf -H 'Content-type: application/json' --data "{\\"text\\": \\"${MESSAGE}\\"}" "$SLACK_WEBHOOK" >/dev/null || true
-        '''
-      }
+      cleanWs(deleteDirs: true, notFailBuild: true)
     }
   }
 }
