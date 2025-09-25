@@ -5,11 +5,11 @@
     "comment": "some comment",
     "reportLink": "${BUILD_URL}",
     "language": "en",
-    "allureFolder": "build/reports/allure-report/allureReport/",
+    "allureFolder": "./allure-report/",
     "enableChart": true
   },
   "slack": {
-    "token": "xoxb-8649160762915-9563387706501-rsKHhsKHF30MWznFwxuvY9wr",
+    "token": "xoxb-8649160762915-9563387706501-gd2AIxdNTWkMSqq7xaexvwT5",
     "chat": "C09D3RA3551",
     "replyTo": ""
   }

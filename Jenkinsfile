@@ -17,6 +17,7 @@ pipeline {
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
@@ -42,25 +43,24 @@ pipeline {
         // Фейлы тестов не ломают пайплайн — билд станет UNSTABLE
         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
           sh './gradlew clean smokeTest --continue'
-          // пример для CI: -Dselenide.browser=chrome -Dselenide.headless=true
+          // Для CI можно так:
+          // sh './gradlew clean smokeTest --continue -Dselenide.browser=chrome -Dselenide.headless=true -Dselenide.timeout=10000'
         }
       }
       post {
         always {
           junit allowEmptyResults: true, testResults: 'build/test-results/**/*.xml'
-          archiveArtifacts artifacts: 'build/allure-results/**, build/reports/**, build/logs/**', fingerprint: true, allowEmptyArchive: true
+          archiveArtifacts artifacts: 'build/allure-results/**, build/reports/**, build/logs/**',
+                           fingerprint: true, allowEmptyArchive: true
         }
       }
     }
 
+    // Необязательная стадия: gradle HTML-репорт (если есть таск)
     stage('Generate Allure Report (gradle)') {
       steps {
         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-          sh '''
-            set +e
-            ./gradlew allureReport
-            exit 0
-          '''
+          sh './gradlew allureReport || true'
         }
       }
     }
@@ -68,7 +68,7 @@ pipeline {
 
   post {
     always {
-      // 1) Публикуем Allure (читает build/allure-results)
+      // 1) Публикация Allure в Jenkins — генерит HTML в $WORKSPACE/allure-report
       script {
         try {
           allure(results: [[path: 'build/allure-results']], reportBuildPolicy: 'ALWAYS')
@@ -77,40 +77,47 @@ pipeline {
         }
       }
 
-      // 2) Скачиваем JAR (если нет) и отправляем Slack
-      sh '''
-        set -e
-        # Скачивание JAR в родительскую директорию workspace
-        cd "$WORKSPACE/.."
-        FILE=allure-notifications-4.8.0.jar
-        if [ ! -f "$FILE" ]; then
-          if command -v wget >/dev/null 2>&1; then
-            wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
-          else
-            curl -L -o "$FILE" https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
-          fi
-        fi
-
-        # Быстрая проверка, что summary.json реально существует там, куда указывает allureFolder
-        cd "$WORKSPACE"
-        REPORT_DIR="build/reports/allure-report/allureReport"
-        if [ ! -f "$REPORT_DIR/widgets/summary.json" ]; then
-          echo "❌ Не найден $REPORT_DIR/widgets/summary.json — Slack не отправим."
-          echo "Проверь, что стадия ':allureReport' отработала и путь совпадает с base.allureFolder в notifications/config.json."
-          exit 1
-        fi
-
-        # Запуск уведомления — БЕЗ '|| true', чтобы увидеть реальную ошибку (invalid_auth, not_in_channel и т.п.)
-        echo "➡️  Отправляю Slack-уведомление. Канал из config.json."
-        java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar
-      '''
+      // 2) Slack-уведомление через allure-notifications (НЕ валит билд)
+      script {
+        // Ожидаем, что в notifications/config.json -> base.allureFolder = "./allure-report/"
+        def reportDir = 'allure-report'
+        def hasSummary = sh(returnStatus: true,
+                            script: "test -f '${reportDir}/widgets/summary.json'") == 0
+        if (!hasSummary) {
+          echo "⚠️ Нет ${reportDir}/widgets/summary.json — пропущу Slack. " +
+               "Убедись, что base.allureFolder = \"./allure-report/\" и публикация Allure прошла."
+        } else {
+          // Скачиваем JAR один раз в родительскую директорию
+          sh '''
+            cd "$WORKSPACE/.."
+            FILE=allure-notifications-4.8.0.jar
+            if [ ! -f "$FILE" ]; then
+              if command -v wget >/dev/null 2>&1; then
+                wget -q https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
+              else
+                curl -L -o "$FILE" https://github.com/qa-guru/allure-notifications/releases/download/4.8.0/allure-notifications-4.8.0.jar
+              fi
+            fi
+          '''
+          // Запускаем уведомление; в случае ошибки — помечаем UNSTABLE и даём подсказку
+          def rc = sh(returnStatus: true,
+                      script: 'java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar')
+          if (rc != 0) {
+            echo "⚠️ Allure Notifications rc=${rc}. Частые причины: invalid_auth (токен), " +
+                 "channel_not_found / not_in_channel (канал), или сетевые ограничения (proxy/egress)."
+            if (!currentBuild.result) currentBuild.result = 'UNSTABLE'
+          } else {
+            echo '✅ Slack-уведомление отправлено.'
+          }
+        }
+      }
 
       // 3) Уборка
       cleanWs(deleteDirs: true, notFailBuild: true)
     }
 
     success  { echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS" }
-    unstable { echo "⚠️ ${env.JOB_NAME} #${env.BUILD_NUMBER} UNSTABLE — есть фейлы тестов" }
+    unstable { echo "⚠️ ${env.JOB_NAME} #${env.BUILD_NUMBER} UNSTABLE — смотри отчёты/уведомления" }
     failure  { echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILURE" }
   }
 }
