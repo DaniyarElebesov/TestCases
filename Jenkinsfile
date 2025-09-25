@@ -77,8 +77,9 @@ pipeline {
         }
       }
 
-      // 2) Скачиваем JAR (если нет) и отправляем Slack ИЗ ФАЙЛА notifications/config.json
+      // 2) Скачиваем JAR (если нет) и отправляем Slack
       sh '''
+        set -e
         # Скачивание JAR в родительскую директорию workspace
         cd "$WORKSPACE/.."
         FILE=allure-notifications-4.8.0.jar
@@ -90,10 +91,18 @@ pipeline {
           fi
         fi
 
-        # Запуск уведомления. Токен берётся из notifications/config.json (как у тебя)
+        # Быстрая проверка, что summary.json реально существует там, куда указывает allureFolder
         cd "$WORKSPACE"
-        # ВНИМАНИЕ: не выводим содержимое файла в лог, чтобы не светить токен
-        java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
+        REPORT_DIR="build/reports/allure-report/allureReport"
+        if [ ! -f "$REPORT_DIR/widgets/summary.json" ]; then
+          echo "❌ Не найден $REPORT_DIR/widgets/summary.json — Slack не отправим."
+          echo "Проверь, что стадия ':allureReport' отработала и путь совпадает с base.allureFolder в notifications/config.json."
+          exit 1
+        fi
+
+        # Запуск уведомления — БЕЗ '|| true', чтобы увидеть реальную ошибку (invalid_auth, not_in_channel и т.п.)
+        echo "➡️  Отправляю Slack-уведомление. Канал из config.json."
+        java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar
       '''
 
       // 3) Уборка
