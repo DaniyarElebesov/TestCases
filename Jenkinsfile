@@ -5,7 +5,7 @@ pipeline {
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '30'))
     disableConcurrentBuilds()
-    skipDefaultCheckout(true)  // чтобы не было двойного "Declarative: Checkout SCM"
+    skipDefaultCheckout(true)
   }
 
   // 02:00 Пн–Пт
@@ -39,10 +39,10 @@ pipeline {
 
     stage('Run Smoke Tests') {
       steps {
-        // НЕ роняем пайплайн при фейлах: помечаем UNSTABLE и идём дальше
+        // НЕ роняем пайплайн на фейлах: билд станет UNSTABLE, но пойдём дальше
         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
           sh './gradlew clean smokeTest --continue'
-          // При необходимости добавить Selenide-хедлесс:
+          // При необходимости:
           // sh './gradlew clean smokeTest --continue -Dselenide.browser=chrome -Dselenide.headless=true -Dselenide.timeout=10000'
         }
       }
@@ -54,7 +54,6 @@ pipeline {
       }
     }
 
-    // Не критично: gradle-генерация HTML Allure; если нет таска — не падаем
     stage('Generate Allure Report (gradle)') {
       steps {
         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -70,7 +69,7 @@ pipeline {
 
   post {
     always {
-      // 1) Публикация Allure в Jenkins (читает build/allure-results)
+      // 1) Публикуем Allure (читает build/allure-results)
       script {
         try {
           allure(results: [[path: 'build/allure-results']], reportBuildPolicy: 'ALWAYS')
@@ -79,9 +78,9 @@ pipeline {
         }
       }
 
-      // 2) Скачивание JAR (если нет) и запуск Slack-уведомления ВСЕГДА
+      // 2) Готовим JAR и отправляем уведомление в Slack
       script {
-        // Скачать jar в родительскую папку (как в твоих шагах)
+        // Скачивание JAR (если ещё нет)
         sh '''
           cd "$WORKSPACE/.."
           FILE=allure-notifications-4.8.0.jar
@@ -94,21 +93,30 @@ pipeline {
           fi
         '''
 
-        // Безопасная подмена токена, если есть Credential (иначе берётся из файла)
-        withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_BOT_TOKEN')]) {
-          sh '''
-            cd "$WORKSPACE"
-            if [ -n "$SLACK_BOT_TOKEN" ] && [ -f notifications/config.json ]; then
-              sed -i.bak -E 's/"token"\\s*:\\s*".*"/"token": "'$SLACK_BOT_TOKEN'"/' notifications/config.json
-            fi
-
-            # Запуск уведомления
-            java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
-          '''
+        // Пробуем достать токен из Jenkins Credentials,
+        // если нет — тихо падаем в catch и используем токен из файла репозитория
+        try {
+          withCredentials([string(credentialsId: 'slack-bot-token', variable: 'SLACK_BOT_TOKEN')]) {
+            if (env.SLACK_BOT_TOKEN?.trim()) {
+              sh '''
+                cd "$WORKSPACE"
+                # Осторожно подменяем token в notifications/config.json на секрет из Jenkins
+                sed -i.bak -E 's/"token"\\s*:\\s*".*"/"token": "'$SLACK_BOT_TOKEN'"/' notifications/config.json
+                # Запуск уведомления
+                java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true
+              '''
+            } else {
+              echo "Jenkins credential 'slack-bot-token' пуст — использую токен из репозитория."
+              sh 'cd "$WORKSPACE"; java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true'
+            }
+          }
+        } catch (err) {
+          echo "Jenkins credential 'slack-bot-token' не найден — использую токен из репозитория."
+          sh 'cd "$WORKSPACE"; java "-DconfigFile=notifications/config.json" -jar ../allure-notifications-4.8.0.jar || true'
         }
       }
 
-      // 3) Уборка в самом конце
+      // 3) Уборка
       cleanWs(deleteDirs: true, notFailBuild: true)
     }
 
